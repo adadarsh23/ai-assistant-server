@@ -22,7 +22,7 @@ const geminiSchema = z.object({
     })
   ).min(1, "Messages array cannot be empty"),
   temperature: z.number().min(0).max(1).optional().default(0.7),
-  maxTokens: z.number().int().positive().optional().default(2048),
+  maxTokens: z.number().int().positive().optional().default(8192),
   stream: z.boolean().optional().default(false)
 });
 
