@@ -37,6 +37,10 @@ if (!API_KEY) {
 // ===== EXPRESS APP =====
 const app = express();
 
+// Trust the first proxy in front of the app (e.g., on Render, Heroku)
+// This is required for express-rate-limit to work correctly.
+app.set("trust proxy", 1);
+
 // ===== SECURITY & PERFORMANCE =====
 app.use(helmet({
   contentSecurityPolicy: false,
