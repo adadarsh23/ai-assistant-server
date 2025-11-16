@@ -40,7 +40,7 @@ const config = Object.freeze({
   apiKey: validateEnvVar("VITE_GOOGLE_API_KEY", process.env.VITE_GOOGLE_API_KEY),
   modelId: process.env.GEMINI_MODEL || "gemini-1.5-flash",
   mongoUri: validateEnvVar("MONGO_URI", process.env.MONGO_URI),
-  frontendUrl: parseUrl(process.env.FRONTEND_URL, "http://localhost:5173", "http://localhost:3000", "https://adadarsh23.netlify.app/"),
+  frontendUrl: parseUrl(process.env.FRONTEND_URL),
   logLevel: process.env.LOG_LEVEL || "info",
   enableDebug: parseBoolean(process.env.ENABLE_DEBUG, false),
   maxRequestSize: process.env.MAX_REQUEST_SIZE || "2mb",
