@@ -62,14 +62,14 @@ app.use(pinoHttp({
 // ===== RATE LIMITING =====
 const globalLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 50,
+  max: 5000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: "Too many requests. Slow down.", retryAfter: "60s" }
 });
 const geminiLimiter = rateLimit({
   windowMs: 30 * 1000,
-  max: 10,
+  max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: "Gemini API rate limit exceeded. Wait a bit." }
