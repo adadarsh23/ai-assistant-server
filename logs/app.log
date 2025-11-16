@@ -136,3 +136,5 @@
 {"level":30,"time":"2025-11-16T15:35:37.889Z","pid":5560,"env":"production","msg":"✅ HTTP server closed"}
 {"level":30,"time":"2025-11-16T15:35:37.896Z","pid":5560,"env":"production","msg":"✅ MongoDB disconnected gracefully"}
 {"level":30,"time":"2025-11-16T15:35:37.896Z","pid":5560,"env":"production","msg":"✅ MongoDB closed"}
+{"level":30,"time":"2025-11-16T16:03:37.412Z","pid":424,"env":"production","msg":"✅ MongoDB connected (DB: defaultDB)"}
+{"level":30,"time":"2025-11-16T16:15:20.289Z","pid":19844,"env":"production","msg":"✅ MongoDB connected (DB: defaultDB)"}

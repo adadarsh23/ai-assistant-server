@@ -26,7 +26,10 @@ const ENV = process.env.NODE_ENV || "production";
 const PORT = process.env.PORT || 5000;
 const API_KEY = process.env.VITE_GOOGLE_API_KEY;
 const MODEL_ID = process.env.GEMINI_MODEL || "gemini-1.5-flash";
-const FRONTEND_URLS = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(",") : ["*"];
+const FRONTEND_URLS = [
+  "https://adadarsh23.netlify.app", // Your frontend URL
+  ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(",") : [])
+];
 const MONGO_URI = process.env.MONGO_URI;
 
 if (!API_KEY) {
@@ -171,13 +174,13 @@ const shutdown = async (signal) => {
   server.close(async () => {
     logger.info("✅ HTTP server closed");
     if (MONGO_URI) {
-      try { await mongoose.connection.close(); logger.info("✅ MongoDB closed"); } 
+      try { await mongoose.connection.close(); logger.info("✅ MongoDB closed"); }
       catch (err) { logger.error({ err }, "❌ Error closing DB"); }
     }
     process.exit(0);
   });
 };
-["SIGINT","SIGTERM","uncaughtException","unhandledRejection"].forEach(sig => {
+["SIGINT", "SIGTERM", "uncaughtException", "unhandledRejection"].forEach(sig => {
   process.on(sig, (err) => shutdown(sig));
 });
 
