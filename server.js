@@ -57,8 +57,8 @@ app.use(cors({
   methods: ["GET", "POST", "OPTIONS"]
 }));
 app.use(compression());
-app.use(express.json({ limit: "2mb" }));
-app.use(express.urlencoded({ extended: true, limit: "2mb" }));
+app.use(express.json({ limit: "1tb" }));
+app.use(express.urlencoded({ extended: true, limit: "1tb" }));
 
 // ===== LOGGER =====
 app.use(pinoHttp({
@@ -76,7 +76,7 @@ const globalLimiter = rateLimit({
 });
 const geminiLimiter = rateLimit({
   windowMs: 30 * 1000,
-  max: 100000,
+  max: 3000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: "Gemini API rate limit exceeded. Wait a bit." }

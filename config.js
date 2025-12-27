@@ -43,7 +43,7 @@ const config = Object.freeze({
   frontendUrl: parseUrl(process.env.FRONTEND_URL),
   logLevel: process.env.LOG_LEVEL || "info",
   enableDebug: parseBoolean(process.env.ENABLE_DEBUG, false),
-  maxRequestSize: process.env.MAX_REQUEST_SIZE || "2mb",
+  maxRequestSize: process.env.MAX_REQUEST_SIZE || "1tb",
   retryAttempts: parseIntEnv(process.env.RETRY_ATTEMPTS, 3),
 });
 
