@@ -76,7 +76,7 @@ const globalLimiter = rateLimit({
 });
 const geminiLimiter = rateLimit({
   windowMs: 30 * 1000,
-  max: 1000,
+  max: 100000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: "Gemini API rate limit exceeded. Wait a bit." }
