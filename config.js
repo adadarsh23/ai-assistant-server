@@ -22,6 +22,17 @@ function parseNumber(value, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function requireNumber(name) {
+  const value = process.env[name];
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Missing or invalid numeric environment variable: ${name}`);
+  }
+
+  return parsed;
+}
+
 function parseBoolean(value, fallback = false) {
   if (value === undefined) {
     return fallback;
@@ -76,10 +87,10 @@ const config = Object.freeze({
   retryAttempts: parseNumber(process.env.RETRY_ATTEMPTS, 3),
   allowedOrigins: parseAllowedOrigins(optionalString("FRONTEND_URL", "")),
   trustProxy: parseBoolean(process.env.TRUST_PROXY, true),
-  globalRateLimitWindowMs: parseNumber(process.env.GLOBAL_RATE_LIMIT_WINDOW_MS, 60000),
-  globalRateLimitMax: parseNumber(process.env.GLOBAL_RATE_LIMIT_MAX, 300),
-  geminiRateLimitWindowMs: parseNumber(process.env.GEMINI_RATE_LIMIT_WINDOW_MS, 60000),
-  geminiRateLimitMax: parseNumber(process.env.GEMINI_RATE_LIMIT_MAX, 300),
+  globalRateLimitWindowMs: requireNumber("GLOBAL_RATE_LIMIT_WINDOW_MS"),
+  globalRateLimitMax: requireNumber("GLOBAL_RATE_LIMIT_MAX"),
+  geminiRateLimitWindowMs: requireNumber("GEMINI_RATE_LIMIT_WINDOW_MS"),
+  geminiRateLimitMax: requireNumber("GEMINI_RATE_LIMIT_MAX"),
   enableDbPersistence: parseBoolean(process.env.ENABLE_DB_PERSISTENCE, true),
 });
 
