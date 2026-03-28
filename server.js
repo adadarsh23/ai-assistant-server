@@ -45,6 +45,12 @@ function rateLimitHandler(message, code) {
 }
 
 function requireApiToken(req, res, next) {
+  const authEnabled = String(process.env.ENABLE_API_AUTH || "").trim().toLowerCase() === "true";
+
+  if (!authEnabled) {
+    return next();
+  }
+
   if (!config.serverApiToken) {
     return next();
   }
