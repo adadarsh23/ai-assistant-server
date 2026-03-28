@@ -1,104 +1,99 @@
 import mongoose from "mongoose";
+import config from "./config.js";
 import { logger } from "./utils/logger.js";
-import dotenv from "dotenv";
-dotenv.config();
 
-const MONGO_URI = process.env.MONGO_URI;
-const DB_NAME = process.env.MONGO_DB_NAME || "defaultDB";
 let Conversation;
+let connectionAttempted = false;
 
-/**
- * Connects to MongoDB with retry logic.
- * Retries up to 5 times if connection fails.
- */
+const conversationSchema = new mongoose.Schema({
+  conversationId: { type: String, unique: true, required: true, index: true },
+  request: {
+    messages: [
+      {
+        role: { type: String, required: true },
+        content: { type: String, required: true },
+      },
+    ],
+    temperature: Number,
+    maxTokens: Number,
+  },
+  response: {
+    text: String,
+    fullJson: mongoose.Schema.Types.Mixed,
+  },
+  model: { type: String, required: true, index: true },
+  isStream: { type: Boolean, default: false, index: true },
+  apiLatencyMs: Number,
+  createdAt: { type: Date, default: Date.now, index: true },
+});
+
 export async function connectToDatabase(retries = 5, delay = 3000) {
-  if (!MONGO_URI) {
-    logger.error("❌ MONGO_URI not set in environment. Cannot connect to MongoDB.");
-    throw new Error("MONGO_URI missing");
+  if (!config.enableDbPersistence || !config.mongoUri) {
+    logger.warn("MongoDB persistence disabled; continuing without database");
+    return null;
   }
 
-  mongoose.set("strictQuery", true); // recommended by Mongoose 7+
+  if (mongoose.connection.readyState === 1) {
+    return Conversation || mongoose.models.Conversation;
+  }
+
+  if (connectionAttempted) {
+    return Conversation || null;
+  }
+
+  connectionAttempted = true;
+  mongoose.set("strictQuery", true);
   mongoose.set("autoIndex", true);
 
-  for (let attempt = 1; attempt <= retries; attempt++) {
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
     try {
-      await mongoose.connect(MONGO_URI, {
-        dbName: DB_NAME,
-        // useNewUrlParser: false,
-        // useUnifiedTopology: false,
-      });
-      logger.info(`✅ MongoDB connected (DB: ${DB_NAME})`);
-
-      const conversationSchema = new mongoose.Schema({
-        conversationId: { type: String, unique: true, required: true },
-        request: {
-          messages: [{ role: String, content: String }],
-          temperature: Number,
-          maxTokens: Number,
-        },
-        response: {
-          text: String,
-          fullJson: mongoose.Schema.Types.Mixed,
-        },
-        model: { type: String, required: true },
-        isStream: { type: Boolean, default: false },
-        apiLatencyMs: Number,
-        createdAt: { type: Date, default: Date.now },
+      await mongoose.connect(config.mongoUri, {
+        dbName: config.mongoDbName,
+        serverSelectionTimeoutMS: 5000,
+        maxPoolSize: 10,
       });
 
-      Conversation = mongoose.model("Conversation", conversationSchema);
+      Conversation = mongoose.models.Conversation || mongoose.model("Conversation", conversationSchema);
+      logger.info({ dbName: config.mongoDbName }, "MongoDB connected");
+      return Conversation;
+    } catch (error) {
+      logger.error({ err: error, attempt }, "MongoDB connection attempt failed");
 
-      return Conversation; // return the model for use elsewhere
-    } catch (err) {
-      logger.error({ err, attempt }, `❌ MongoDB connection attempt ${attempt} failed.`);
       if (attempt < retries) {
-        logger.info(`🔁 Retrying in ${delay}ms...`);
-        await new Promise((res) => setTimeout(res, delay));
-      } else {
-        logger.error("❌ All MongoDB connection attempts failed. Exiting.");
-        process.exit(1);
+        logger.info({ delay, attempt }, "Retrying MongoDB connection");
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
       }
+
+      logger.error("All MongoDB connection attempts failed; continuing without persistence");
+      return null;
     }
   }
+
+  return null;
 }
 
-/**
- * Saves a conversation to MongoDB.
- * Throws error if DB is not connected.
- */
 export async function saveConversation(data) {
-  if (!Conversation) {
-    logger.warn("⚠️ MongoDB model not initialized. Cannot save conversation.");
+  if (!Conversation || mongoose.connection.readyState !== 1) {
+    logger.warn("Conversation persistence skipped because MongoDB is unavailable");
     return;
   }
+
   try {
-    const c = new Conversation(data);
-    await c.save();
-    logger.info("✅ Conversation saved to MongoDB");
-  } catch (err) {
-    logger.error({ err }, "❌ Error saving conversation");
+    await Conversation.create(data);
+    logger.info({ conversationId: data.conversationId }, "Conversation persisted");
+  } catch (error) {
+    logger.error({ err: error, conversationId: data.conversationId }, "Failed to save conversation");
   }
 }
 
-/**
- * Graceful disconnect
- */
 export async function disconnectDatabase() {
   if (mongoose.connection.readyState === 1) {
     try {
       await mongoose.connection.close();
-      logger.info("✅ MongoDB disconnected gracefully");
-    } catch (err) {
-      logger.error({ err }, "❌ Error disconnecting MongoDB");
+      logger.info("MongoDB disconnected gracefully");
+    } catch (error) {
+      logger.error({ err: error }, "Error disconnecting MongoDB");
     }
   }
 }
-
-// Handle shutdown signals
-["SIGINT", "SIGTERM", "uncaughtException", "unhandledRejection"].forEach((sig) =>
-  process.on(sig, async (err) => {
-    if (err) logger.error({ err }, `❌ Signal received: ${sig}`);
-    await disconnectDatabase();
-    process.exit(0);
-  })
-);

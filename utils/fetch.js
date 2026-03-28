@@ -1,22 +1,46 @@
-import fetch from "node-fetch";
+import config from "../config.js";
 import { logger } from "./logger.js";
 
-export async function fetchWithRetry(url, options, retries = 3) {
-  for (let i = 0; i < retries; i++) {
+function shouldRetry(status) {
+  return status === 429 || status >= 500;
+}
+
+export async function fetchWithRetry(url, options = {}, retries = config.retryAttempts) {
+  let lastError;
+
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
+
     try {
-      const res = await fetch(url, options);
-      if (res.status === 429 && i < retries - 1) {
-        const delay = Math.pow(2, i) * 1000;
-        logger.warn(`⚠️ 429 Too Many Requests, retrying in ${delay}ms`);
-        await new Promise(r => setTimeout(r, delay));
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (shouldRetry(response.status) && attempt < retries - 1) {
+        const delay = 2 ** attempt * 500;
+        logger.warn({ status: response.status, attempt: attempt + 1, delay }, "Upstream request failed, retrying");
+        await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
       }
-      return res;
-    } catch (err) {
-      if (i === retries - 1) throw err;
-      const delay = Math.pow(2, i) * 1000;
-      logger.warn(`⚠️ Fetch failed. Retry in ${delay}ms (${err.message})`);
-      await new Promise(r => setTimeout(r, delay));
+
+      return response;
+    } catch (error) {
+      clearTimeout(timeout);
+      lastError = error;
+
+      if (attempt === retries - 1) {
+        throw error;
+      }
+
+      const delay = 2 ** attempt * 500;
+      logger.warn({ err: error, attempt: attempt + 1, delay }, "Network call failed, retrying");
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
+
+  throw lastError;
 }

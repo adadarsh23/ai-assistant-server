@@ -1,26 +1,23 @@
-/**
- * Send a standardized JSON response
- * @param {import('express').Response} res - Express response object
- * @param {number} status - HTTP status code
- * @param {object} payload - Response payload
- * @param {object} [options] - Optional extra metadata
- * @param {string} [options.requestId] - Request ID for tracing
- * @param {string} [options.path] - Request path
- */
-export function respond(res, status, payload = {}, options = {}) {
-  const success = payload.success !== undefined ? payload.success : status >= 200 && status < 400;
-
-  const responseBody = {
-    status,
-    success,
+function buildBody(res, status, payload) {
+  return {
+    success: payload.success ?? (status >= 200 && status < 400),
+    message: payload.message || "",
+    ...(payload.data !== undefined ? { data: payload.data } : {}),
+    ...(payload.error !== undefined ? { error: payload.error } : {}),
+    ...(payload.meta !== undefined ? { meta: payload.meta } : {}),
+    requestId: res.req?.id,
     timestamp: new Date().toISOString(),
-    path: options.path || res.req?.originalUrl,
-    requestId: options.requestId || res.req?.id || null,
-    ...payload
   };
+}
 
-  // Optional: remove null values for cleaner responses
-  Object.keys(responseBody).forEach(key => responseBody[key] === null && delete responseBody[key]);
+export function respond(res, status, payload = {}) {
+  return res.status(status).json(buildBody(res, status, payload));
+}
 
-  return res.status(status).json(responseBody);
+export function sendSuccess(res, status, message, data, meta) {
+  return respond(res, status, { success: true, message, data, meta });
+}
+
+export function sendError(res, status, message, { error, meta } = {}) {
+  return respond(res, status, { success: false, message, error, meta });
 }

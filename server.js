@@ -1,209 +1,249 @@
-
-import express from "express";
+import compression from "compression";
 import cors from "cors";
-import dotenv from "dotenv";
+import express from "express";
 import helmet from "helmet";
 import hpp from "hpp";
-import compression from "compression";
-import rateLimit from "express-rate-limit";
-import crypto from "crypto";
 import pinoHttp from "pino-http";
-import { logger } from "./utils/logger.js";
-import chalk from "chalk";
-import mongoose from "mongoose";
-import os from "os";
+import rateLimit from "express-rate-limit";
 
+import config from "./config.js";
+import { getApiStatus } from "./controllers/geminiController.js";
+import { connectToDatabase, disconnectDatabase } from "./db.js";
+import { asyncHandler } from "./middleware/asyncHandler.js";
+import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
+import { requestContext } from "./middleware/requestContext.js";
 import geminiRoute from "./routes/gemini.js";
-import { respond } from "./utils/response.js";
-import { getSuggestions } from "./utils/suggestions.js";
-import { fetchWithRetry } from "./utils/fetch.js";
-import { connectToDatabase } from "./db.js";
+import { logger } from "./utils/logger.js";
+import { sendError, sendSuccess } from "./utils/response.js";
 
-dotenv.config();
+const app = express();
+let server;
 
-// ===== CONFIG =====
-const ENV = process.env.NODE_ENV || "production";
-const PORT = process.env.PORT || 5000;
-const API_KEY = process.env.VITE_GOOGLE_API_KEY;
-const MODEL_ID = process.env.GEMINI_MODEL || "gemini-1.5-flash";
-const FRONTEND_URLS = [
-  "https://adadarsh23.netlify.app", // Your frontend URL
-  ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(",") : [])
-];
-const MONGO_URI = process.env.MONGO_URI;
-
-if (!API_KEY) {
-  logger.error("❌ Missing VITE_GOOGLE_API_KEY. Exiting...");
-  process.exit(1);
+if (config.trustProxy) {
+  app.set("trust proxy", 1);
 }
 
-// ===== EXPRESS APP =====
-const app = express();
+function corsOriginHandler(origin, callback) {
+  if (!origin || config.allowedOrigins.includes(origin)) {
+    return callback(null, true);
+  }
 
-// Trust the first proxy in front of the app (e.g., on Render, Heroku)
-// This is required for express-rate-limit to work correctly.
-app.set("trust proxy", 1);
+  return callback(new Error("CORS origin denied"));
+}
 
-// ===== SECURITY & PERFORMANCE =====
-app.use(helmet({
-  contentSecurityPolicy: false,
-  crossOriginEmbedderPolicy: false,
-  crossOriginResourcePolicy: { policy: "cross-origin" },
-}));
+function rateLimitHandler(message, code) {
+  return (req, res) =>
+    sendError(res, 429, message, {
+      error: { code },
+      meta: {
+        retryAfterSeconds:
+          req.rateLimit?.resetTime instanceof Date
+            ? Math.max(1, Math.ceil((req.rateLimit.resetTime.getTime() - Date.now()) / 1000))
+            : 60,
+      },
+    });
+}
+
+function requireApiToken(req, res, next) {
+  if (!config.serverApiToken) {
+    return next();
+  }
+
+  const authHeader = req.headers.authorization || "";
+  const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  const providedToken = bearerToken || req.headers["x-api-token"];
+
+  if (!providedToken) {
+    return sendError(res, 401, "Authentication is required", {
+      error: { code: "AUTH_REQUIRED" },
+    });
+  }
+
+  if (providedToken !== config.serverApiToken) {
+    return sendError(res, 403, "You are not authorized to access this resource", {
+      error: { code: "AUTH_FORBIDDEN" },
+    });
+  }
+
+  return next();
+}
+
+function sanitizeValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(sanitizeValue);
+  }
+
+  if (value && typeof value === "object") {
+    const sanitizedEntries = Object.entries(value)
+      .filter(([key]) => !key.startsWith("$") && !key.includes("."))
+      .map(([key, nestedValue]) => [key, sanitizeValue(nestedValue)]);
+
+    return Object.fromEntries(sanitizedEntries);
+  }
+
+  return value;
+}
+
+function sanitizeRequest(req, res, next) {
+  if (req.body && typeof req.body === "object") {
+    req.body = sanitizeValue(req.body);
+  }
+
+  if (req.params && typeof req.params === "object") {
+    req.params = sanitizeValue(req.params);
+  }
+
+  return next();
+}
+
+app.disable("x-powered-by");
+app.use(requestContext);
+app.use(
+  pinoHttp({
+    logger,
+    genReqId: (req) => req.id,
+  }),
+);
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  }),
+);
 app.use(hpp());
-app.use(cors({
-  origin: FRONTEND_URLS,
-  credentials: true,
-  methods: ["GET", "POST", "OPTIONS"]
-}));
+app.use(
+  cors({
+    origin: corsOriginHandler,
+    credentials: true,
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
+  }),
+);
 app.use(compression());
-app.use(express.json({ limit: "1tb" }));
-app.use(express.urlencoded({ extended: true, limit: "1tb" }));
+app.use(express.json({ limit: config.maxRequestSize }));
+app.use(express.urlencoded({ extended: true, limit: config.maxRequestSize }));
+app.use(sanitizeRequest);
 
-// ===== LOGGER =====
-app.use(pinoHttp({
-  logger,
-  genReqId: () => crypto.randomBytes(8).toString("hex"),
-}));
-
-// ===== RATE LIMITING =====
 const globalLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 100000,
+  windowMs: config.globalRateLimitWindowMs,
+  max: config.globalRateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, error: "Too many requests. Slow down.", retryAfter: "60s" }
+  handler: rateLimitHandler("Too many requests", "RATE_LIMIT_EXCEEDED"),
 });
+
 const geminiLimiter = rateLimit({
-  windowMs: 30 * 1000,
-  max: 100000,
+  windowMs: config.geminiRateLimitWindowMs,
+  max: config.geminiRateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, error: "Gemini API limit reached. Please try again later." }
+  handler: rateLimitHandler("Gemini rate limit reached", "GEMINI_RATE_LIMIT_EXCEEDED"),
 });
 
 app.use("/api", globalLimiter);
+app.use("/api", requireApiToken);
 app.use("/api/gemini", geminiLimiter);
 
-// ===== HEALTH & DIAGNOSTICS =====
-app.get("/", (req, res) => respond(res, 200, {
-  success: true,
-  message: "🚀 Gemini Proxy Active",
-  version: "2.5.0",
-  environment: ENV,
-  endpoints: { health: "/health", status: "/api/status", gemini: "/api/gemini" }
-}));
+app.get("/", (req, res) =>
+  sendSuccess(res, 200, "Gemini proxy server is running", {
+    environment: config.env,
+    version: "3.0.0",
+    endpoints: {
+      health: "/health",
+      status: "/api/status",
+      gemini: "/api/gemini",
+    },
+  }),
+);
 
 app.get("/health", (req, res) => {
-  const mem = process.memoryUsage();
-  const uptime = process.uptime();
-  const cpus = os.cpus();
+  const memory = process.memoryUsage();
 
-  respond(res, 200, {
-    success: true,
-    uptime: `${Math.floor(uptime)}s`,
+  return sendSuccess(res, 200, "Server is healthy", {
+    uptimeSeconds: Math.floor(process.uptime()),
     memory: {
-      rss: `${Math.round(mem.rss / 1024 / 1024)} MB`,
-      heapUsed: `${Math.round(mem.heapUsed / 1024 / 1024)} MB`,
-      heapTotal: `${Math.round(mem.heapTotal / 1024 / 1024)} MB`
+      rssMb: Math.round(memory.rss / 1024 / 1024),
+      heapUsedMb: Math.round(memory.heapUsed / 1024 / 1024),
+      heapTotalMb: Math.round(memory.heapTotal / 1024 / 1024),
     },
-    loadAverage: process.platform !== "win32" ? process.loadavg() : "N/A on Windows",
-    cpuCores: cpus.length,
-    cpuModel: cpus[0]?.model || "N/A",
-    dbStatus: MONGO_URI ? (mongoose.connection.readyState === 1 ? "connected" : "disconnected") : "disabled",
-    timestamp: new Date().toISOString()
+    database: config.mongoUri && config.enableDbPersistence ? "configured" : "disabled",
   });
 });
 
-// ===== API STATUS CHECK =====
-app.get("/api/status", async (req, res) => {
-  const start = Date.now();
-  try {
-    const test = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}?key=${API_KEY}`);
-    const latency = Date.now() - start;
-
-    if (!test.ok) {
-      const errTxt = await test.text();
-      return respond(res, 503, {
-        success: false,
-        geminiApi: "disconnected",
-        latency: `${latency}ms`,
-        error: errTxt.slice(0, 300),
-        suggestions: getSuggestions(test.status)
-      });
-    }
-
-    respond(res, 200, {
-      success: true,
-      geminiApi: "connected",
-      model: MODEL_ID,
-      latency: `${latency}ms`
-    });
-  } catch (err) {
-    respond(res, 503, { success: false, geminiApi: "error", error: err.message });
-  }
-});
-
-// ===== GEMINI ROUTE =====
+app.get("/api/status", asyncHandler(getApiStatus));
 app.use("/api/gemini", geminiRoute);
 
-// ===== 404 HANDLER =====
-app.use((req, res) => respond(res, 404, {
-  success: false,
-  error: "Route not found",
-  method: req.method,
-  path: req.originalUrl,
-  message: "This endpoint does not exist.",
-  available: ["GET /", "GET /health", "GET /api/status", "POST /api/gemini"]
-}));
+app.use((error, req, res, next) => {
+  if (error?.message === "CORS origin denied") {
+    return sendError(res, 403, "Origin is not allowed", {
+      error: { code: "CORS_DENIED" },
+    });
+  }
 
-// ===== GLOBAL ERROR HANDLER =====
-app.use((err, req, res, next) => {
-  req.log?.error({ err }, "🔥 Uncaught Error");
-  respond(res, err.status || 500, {
-    success: false,
-    error: "Unexpected server error",
-    details: ENV === "development" ? err.message : undefined
-  });
+  return next(error);
 });
 
-// ===== GRACEFUL SHUTDOWN =====
-let server;
-const shutdown = async (signal) => {
-  logger.info(`⚠️ ${signal} received. Cleaning up...`);
-  server.close(async () => {
-    logger.info("✅ HTTP server closed");
-    if (MONGO_URI) {
-      try { await mongoose.connection.close(); logger.info("✅ MongoDB closed"); }
-      catch (err) { logger.error({ err }, "❌ Error closing DB"); }
-    }
-    process.exit(0);
-  });
-};
-["SIGINT", "SIGTERM", "uncaughtException", "unhandledRejection"].forEach(sig => {
-  process.on(sig, (err) => shutdown(sig));
-});
+app.use(notFoundHandler);
+app.use(errorHandler);
 
-// ===== START SERVER =====
-(async () => {
+async function shutdown(signal, error) {
+  if (error) {
+    logger.error({ err: error, signal }, "Fatal signal received");
+  } else {
+    logger.info({ signal }, "Shutdown signal received");
+  }
+
+  if (server) {
+    await new Promise((resolve) => server.close(resolve));
+  }
+
+  await disconnectDatabase();
+}
+
+async function startServer() {
   await connectToDatabase();
 
-  server = app.listen(PORT, () => {
-    const banner = [
-      "🚀 Gemini Proxy Server",
-      `Mode: ${ENV}`,
-      `URL: http://localhost:${PORT}`,
-      `Model: ${MODEL_ID}`,
-      `Database: ${MONGO_URI ? "Connected" : "Disabled"}`,
-      "Endpoints: GET /health | GET /api/status | POST /api/gemini"
-    ];
-
-    console.log(chalk.cyan("╔" + "═".repeat(65) + "╗"));
-    banner.forEach(line => console.log(chalk.cyan("║ ") + line.padEnd(63) + chalk.cyan(" ║")));
-    console.log(chalk.cyan("╚" + "═".repeat(65) + "╝"));
-
-    // Performance tuning
-    server.keepAliveTimeout = 61 * 1000;
-    server.headersTimeout = 65 * 1000;
+  server = app.listen(config.port, () => {
+    logger.info(
+      {
+        port: config.port,
+        environment: config.env,
+        model: config.modelId,
+        dbEnabled: Boolean(config.mongoUri && config.enableDbPersistence),
+        renderServiceId: config.renderServiceId || undefined,
+        renderOutboundIpCount: config.renderOutboundIps.length,
+      },
+      "Server started",
+    );
   });
-})();
+
+  // Keep connections alive without an idle timeout so upstream clients can reuse them.
+  server.keepAliveTimeout = 0;
+  server.headersTimeout = 0;
+  server.requestTimeout = 0;
+  server.timeout = 0;
+}
+
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, async () => {
+    await shutdown(signal);
+    process.exit(0);
+  });
+}
+
+process.on("uncaughtException", async (error) => {
+  await shutdown("uncaughtException", error);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", async (error) => {
+  await shutdown("unhandledRejection", error);
+  process.exit(1);
+});
+
+startServer().catch(async (error) => {
+  logger.error({ err: error }, "Server failed to start");
+  await shutdown("startup_failure", error);
+  process.exit(1);
+});

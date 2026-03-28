@@ -1,54 +1,86 @@
-// server/config.js
 import dotenv from "dotenv";
-import { URL } from "url";
 
 dotenv.config();
 
-function validateEnvVar(key, value, required = true) {
-  if (required && (!value || value.trim() === "")) {
-    throw new Error(`❌ Missing required environment variable: ${key}`);
+function requireString(name, { defaultValue, allowEmpty = false } = {}) {
+  const value = process.env[name] ?? defaultValue;
+
+  if (value === undefined || (!allowEmpty && String(value).trim() === "")) {
+    throw new Error(`Missing required environment variable: ${name}`);
   }
-  return value;
+
+  return String(value).trim();
 }
 
-function parseBoolean(value, defaultValue = false) {
-  if (value === undefined) return defaultValue;
-  return ["true", "1"].includes(value.toString().toLowerCase());
+function optionalString(name, defaultValue = "") {
+  const value = process.env[name];
+  return value === undefined ? defaultValue : String(value).trim();
 }
 
-function parseIntEnv(value, defaultValue) {
-  const n = parseInt(value, 10);
-  return isNaN(n) ? defaultValue : n;
+function parseNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function parseUrl(value, defaultValue = null) {
-  if (!value) return defaultValue;
-  try {
-    return new URL(value).toString();
-  } catch (err) {
-    console.warn(`⚠️ Invalid URL in environment variable: ${value}. Using default.`);
-    return defaultValue;
+function parseBoolean(value, fallback = false) {
+  if (value === undefined) {
+    return fallback;
   }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (["true", "1", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["false", "0", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
 }
 
-// ==============================
-// ✅ CONFIGURATION
-// ==============================
+function parseAllowedOrigins(rawOrigins) {
+  const defaults = ["https://adadarsh23.netlify.app"];
+  const configured = rawOrigins
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  return [...new Set([...defaults, ...configured])];
+}
+
+function parseCsv(rawValue) {
+  return rawValue
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+const env = optionalString("NODE_ENV", "development") || "development";
+
 const config = Object.freeze({
-  env: process.env.NODE_ENV || "production",
-  port: parseIntEnv(process.env.PORT, 5000),
-  apiKey: validateEnvVar("VITE_GOOGLE_API_KEY", process.env.VITE_GOOGLE_API_KEY),
-  modelId: process.env.GEMINI_MODEL || "gemini-1.5-flash",
-  mongoUri: validateEnvVar("MONGO_URI", process.env.MONGO_URI),
-  frontendUrl: parseUrl(process.env.FRONTEND_URL),
-  logLevel: process.env.LOG_LEVEL || "info",
-  enableDebug: parseBoolean(process.env.ENABLE_DEBUG, false),
-  maxRequestSize: process.env.MAX_REQUEST_SIZE || "1tb",
-  retryAttempts: parseIntEnv(process.env.RETRY_ATTEMPTS, 3),
+  env,
+  isDevelopment: env === "development",
+  isProduction: env === "production",
+  port: parseNumber(process.env.PORT, 5000),
+  apiKey: requireString("VITE_GOOGLE_API_KEY"),
+  serverApiToken: optionalString("SERVER_API_TOKEN", ""),
+  renderServiceId: optionalString("RENDER_SERVICE_ID", ""),
+  renderOutboundIps: parseCsv(optionalString("RENDER_OUTBOUND_IPS", "")),
+  modelId: optionalString("GEMINI_MODEL", "gemini-1.5-flash"),
+  mongoUri: optionalString("MONGO_URI", ""),
+  mongoDbName: optionalString("MONGO_DB_NAME", "defaultDB"),
+  logLevel: optionalString("LOG_LEVEL", env === "production" ? "info" : "debug"),
+  maxRequestSize: optionalString("MAX_REQUEST_SIZE", "1mb"),
+  requestTimeoutMs: parseNumber(process.env.REQUEST_TIMEOUT_MS, 30000),
+  retryAttempts: parseNumber(process.env.RETRY_ATTEMPTS, 3),
+  allowedOrigins: parseAllowedOrigins(optionalString("FRONTEND_URL", "")),
+  trustProxy: parseBoolean(process.env.TRUST_PROXY, true),
+  globalRateLimitWindowMs: parseNumber(process.env.GLOBAL_RATE_LIMIT_WINDOW_MS, 60000),
+  globalRateLimitMax: parseNumber(process.env.GLOBAL_RATE_LIMIT_MAX, 120),
+  geminiRateLimitWindowMs: parseNumber(process.env.GEMINI_RATE_LIMIT_WINDOW_MS, 60000),
+  geminiRateLimitMax: parseNumber(process.env.GEMINI_RATE_LIMIT_MAX, 30),
+  enableDbPersistence: parseBoolean(process.env.ENABLE_DB_PERSISTENCE, true),
 });
-
-export const getConfig = (key, defaultValue = undefined) => {
-  return config[key] ?? defaultValue;
-};
 
 export default config;
