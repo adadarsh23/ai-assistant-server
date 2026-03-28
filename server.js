@@ -146,7 +146,7 @@ const geminiLimiter = rateLimit({
   max: config.geminiRateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: rateLimitHandler("Gemini rate limit reached", "GEMINI_RATE_LIMIT_EXCEEDED"),
+  handler: rateLimitHandler("Too many Gemini requests. Please wait a moment and try again.", "GEMINI_RATE_LIMIT_EXCEEDED"),
 });
 
 app.use("/api", globalLimiter);

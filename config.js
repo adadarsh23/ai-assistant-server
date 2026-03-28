@@ -77,9 +77,9 @@ const config = Object.freeze({
   allowedOrigins: parseAllowedOrigins(optionalString("FRONTEND_URL", "")),
   trustProxy: parseBoolean(process.env.TRUST_PROXY, true),
   globalRateLimitWindowMs: parseNumber(process.env.GLOBAL_RATE_LIMIT_WINDOW_MS, 60000),
-  globalRateLimitMax: parseNumber(process.env.GLOBAL_RATE_LIMIT_MAX, 120),
+  globalRateLimitMax: parseNumber(process.env.GLOBAL_RATE_LIMIT_MAX, 300),
   geminiRateLimitWindowMs: parseNumber(process.env.GEMINI_RATE_LIMIT_WINDOW_MS, 60000),
-  geminiRateLimitMax: parseNumber(process.env.GEMINI_RATE_LIMIT_MAX, 30),
+  geminiRateLimitMax: parseNumber(process.env.GEMINI_RATE_LIMIT_MAX, 300),
   enableDbPersistence: parseBoolean(process.env.ENABLE_DB_PERSISTENCE, true),
 });
 

@@ -30,12 +30,15 @@ function buildGeminiPayload({ messages, temperature, maxTokens }) {
 
 async function parseUpstreamError(response) {
   const rawText = await response.text();
+  const retryAfterHeader = response.headers.get("retry-after");
+  const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) || retryAfterHeader : undefined;
 
   try {
     return {
       code: "UPSTREAM_ERROR",
       status: response.status,
       upstream: JSON.parse(rawText),
+      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
       suggestions: getSuggestions(response.status),
     };
   } catch {
@@ -43,6 +46,7 @@ async function parseUpstreamError(response) {
       code: "UPSTREAM_ERROR",
       status: response.status,
       upstream: rawText.slice(0, 300),
+      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
       suggestions: getSuggestions(response.status),
     };
   }
@@ -96,10 +100,16 @@ export async function generateGeminiResponse({ messages, temperature, maxTokens,
   const latencyMs = Date.now() - startedAt;
 
   if (!response.ok) {
-    throw new AppError(response.status, "Gemini request failed", {
-      code: "GEMINI_REQUEST_FAILED",
-      details: await parseUpstreamError(response),
-    });
+    throw new AppError(
+      response.status,
+      response.status === 429
+        ? "Gemini rate limit reached. Please retry after a short delay."
+        : "Gemini request failed",
+      {
+        code: "GEMINI_REQUEST_FAILED",
+        details: await parseUpstreamError(response),
+      },
+    );
   }
 
   return { response, latencyMs };
