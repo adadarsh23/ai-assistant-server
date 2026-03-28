@@ -44,6 +44,38 @@ function rateLimitHandler(message, code) {
     });
 }
 
+function requireApiToken(req, res, next) {
+  const publicOrigin = "https://adadarsh23.netlify.app";
+  const requestOrigin = String(req.headers.origin || "").replace(/\/$/, "");
+
+  // Allow browser requests from the trusted frontend without an API token.
+  if (requestOrigin === publicOrigin) {
+    return next();
+  }
+
+  if (!config.serverApiToken) {
+    return next();
+  }
+
+  const authHeader = req.headers.authorization || "";
+  const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  const providedToken = bearerToken || req.headers["x-api-token"];
+
+  if (!providedToken) {
+    return sendError(res, 401, "Authentication is required", {
+      error: { code: "AUTH_REQUIRED" },
+    });
+  }
+
+  if (providedToken !== config.serverApiToken) {
+    return sendError(res, 403, "You are not authorized to access this resource", {
+      error: { code: "AUTH_FORBIDDEN" },
+    });
+  }
+
+  return next();
+}
+
 function sanitizeValue(value) {
   if (Array.isArray(value)) {
     return value.map(sanitizeValue);
@@ -118,6 +150,7 @@ const geminiLimiter = rateLimit({
 });
 
 app.use("/api", globalLimiter);
+app.use("/api", requireApiToken);
 app.use("/api/gemini", geminiLimiter);
 
 app.get("/", (req, res) =>
